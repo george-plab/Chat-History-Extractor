@@ -1,19 +1,20 @@
 import { useState } from 'react';
-import type { Conversation, Platform, SourceType } from './types';
+import type { Conversation, Platform } from './types';
 import { parseConversations } from './parsers';
 import { downloadMarkdown, exportToPDF } from './exporters';
+import { detectPlatform, getPlatformName } from './platformDetector';
 import './App.css';
 
 function App() {
-  const [sourceType, setSourceType] = useState<SourceType>('local');
   const [platform, setPlatform] = useState<Platform>('ollama');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [urlInput, setUrlInput] = useState('');
   const [showHeaders, setShowHeaders] = useState(true);
   const [expandedPreview, setExpandedPreview] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
+  const [detectedPlatform, setDetectedPlatform] = useState<Platform | null>(null);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -22,6 +23,7 @@ function App() {
     setLoading(true);
     setError(null);
     setSuccess(null);
+    setDetectedPlatform(null);
 
     try {
       console.log('Reading file:', file.name);
@@ -32,15 +34,29 @@ function App() {
       console.log('Parsed JSON successfully');
       console.log('Data structure:', Object.keys(data));
 
-      const parsed = parseConversations(data, platform);
+      // Auto-detect platform
+      const detected = detectPlatform(data);
+      console.log('Detected platform:', detected);
+      console.log('Selected platform:', platform);
+
+      // Check if detected platform matches selected platform
+      if (detected && detected !== platform) {
+        setDetectedPlatform(detected);
+        setError(
+          `⚠️ Este JSON parece ser de ${getPlatformName(detected)}, pero seleccionaste ${getPlatformName(platform)}. ` +
+          `Haz clic en "${getPlatformName(detected)}" arriba o continúa con ${getPlatformName(platform)}.`
+        );
+      }
+
+      const parsed = parseConversations(data, detected || platform);
       console.log('Parsed conversations:', parsed.length);
 
       setConversations(parsed);
-      setSuccess(`Successfully loaded ${parsed.length} conversation(s) from ${platform.toUpperCase()}`);
+      setSuccess(`✅ Cargadas ${parsed.length} conversación(es) de ${getPlatformName(detected || platform)}`);
     } catch (err) {
       console.error('Error processing file:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to parse JSON file';
-      setError(`Error: ${errorMessage}`);
+      setError(`❌ Error: ${errorMessage}`);
       setConversations([]);
     } finally {
       setLoading(false);
@@ -69,6 +85,7 @@ function App() {
     setLoading(true);
     setError(null);
     setSuccess(null);
+    setDetectedPlatform(null);
 
     try {
       console.log('Reading dropped file:', file.name);
@@ -79,47 +96,33 @@ function App() {
       console.log('Parsed JSON successfully');
       console.log('Data structure:', Object.keys(data));
 
-      const parsed = parseConversations(data, platform);
+      // Auto-detect platform
+      const detected = detectPlatform(data);
+      console.log('Detected platform:', detected);
+
+      if (detected && detected !== platform) {
+        setDetectedPlatform(detected);
+        setError(
+          `⚠️ Este JSON parece ser de ${getPlatformName(detected)}, pero seleccionaste ${getPlatformName(platform)}. ` +
+          `Haz clic en "${getPlatformName(detected)}" arriba o continúa con ${getPlatformName(platform)}.`
+        );
+      }
+
+      const parsed = parseConversations(data, detected || platform);
       console.log('Parsed conversations:', parsed.length);
 
       setConversations(parsed);
-      setSuccess(`Successfully loaded ${parsed.length} conversation(s) from ${platform.toUpperCase()}`);
+      setSuccess(`✅ Cargadas ${parsed.length} conversación(es) de ${getPlatformName(detected || platform)}`);
     } catch (err) {
       console.error('Error processing file:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to parse JSON file';
-      setError(`Error: ${errorMessage}`);
+      setError(`❌ Error: ${errorMessage}`);
       setConversations([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleUrlFetch = async () => {
-    if (!urlInput.trim()) {
-      setError('Please enter a valid URL');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      const response = await fetch(urlInput);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-      const parsed = parseConversations(data, platform);
-      setConversations(parsed);
-      setSuccess(`Successfully loaded ${parsed.length} conversation(s) from ${platform.toUpperCase()}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch or parse data from URL');
-      setConversations([]);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleExportMarkdown = () => {
     if (conversations.length === 0) {
@@ -161,140 +164,98 @@ function App() {
 
         {/* Main Content */}
         <div className="main-content">
-          {/* Source Type Selection */}
+          {/* Header with Help Button */}
           <div className="glass-card">
-            <h2>1. Select Source Type</h2>
-            <div className="tabs">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2>1. Cargar Chat History</h2>
+                <p className="mt-2">
+                  Sube tu archivo JSON exportado desde cualquier plataforma LLM
+                </p>
+              </div>
               <button
-                className={`tab ${sourceType === 'local' ? 'active' : ''}`}
-                onClick={() => setSourceType('local')}
+                className="btn btn-info"
+                onClick={() => setShowHelpModal(true)}
+                style={{ minWidth: '200px' }}
               >
-                📁 Local Files
-              </button>
-              <button
-                className={`tab ${sourceType === 'online' ? 'active' : ''}`}
-                onClick={() => setSourceType('online')}
-              >
-                🌐 Online URL
+                📖 ¿Cómo exportar?
               </button>
             </div>
-            <p className="mt-2">
-              {sourceType === 'local'
-                ? 'Upload JSON files from Ollama or LM Studio'
-                : 'Fetch chat history from ChatGPT, Gemini, or Claude via URL'}
-            </p>
           </div>
 
           {/* Platform Selection */}
           <div className="glass-card">
-            <h2>2. Select Platform</h2>
+            <h2>2. Selecciona tu Plataforma</h2>
             <div className="platform-grid">
-              {sourceType === 'local' ? (
-                <>
-                  <button
-                    className={`platform-btn ${platform === 'ollama' ? 'active' : ''}`}
-                    onClick={() => setPlatform('ollama')}
-                  >
-                    <span className="platform-icon">🦙</span>
-                    <span className="platform-name">Ollama</span>
-                  </button>
-                  <button
-                    className={`platform-btn ${platform === 'lmstudio' ? 'active' : ''}`}
-                    onClick={() => setPlatform('lmstudio')}
-                  >
-                    <span className="platform-icon">💻</span>
-                    <span className="platform-name">LM Studio</span>
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    className={`platform-btn ${platform === 'chatgpt' ? 'active' : ''}`}
-                    onClick={() => setPlatform('chatgpt')}
-                  >
-                    <span className="platform-icon">🤖</span>
-                    <span className="platform-name">ChatGPT</span>
-                  </button>
-                  <button
-                    className={`platform-btn ${platform === 'gemini' ? 'active' : ''}`}
-                    onClick={() => setPlatform('gemini')}
-                  >
-                    <span className="platform-icon">✨</span>
-                    <span className="platform-name">Gemini</span>
-                  </button>
-                  <button
-                    className={`platform-btn ${platform === 'claude' ? 'active' : ''}`}
-                    onClick={() => setPlatform('claude')}
-                  >
-                    <span className="platform-icon">🎭</span>
-                    <span className="platform-name">Claude</span>
-                  </button>
-                </>
-              )}
+              <button
+                className={`platform-btn ${platform === 'ollama' ? 'active' : ''}`}
+                onClick={() => setPlatform('ollama')}
+              >
+                <span className="platform-icon">🦙</span>
+                <span className="platform-name">Ollama</span>
+              </button>
+              <button
+                className={`platform-btn ${platform === 'lmstudio' ? 'active' : ''}`}
+                onClick={() => setPlatform('lmstudio')}
+              >
+                <span className="platform-icon">💻</span>
+                <span className="platform-name">LM Studio</span>
+              </button>
+              <button
+                className={`platform-btn ${platform === 'chatgpt' ? 'active' : ''}`}
+                onClick={() => setPlatform('chatgpt')}
+              >
+                <span className="platform-icon">🤖</span>
+                <span className="platform-name">ChatGPT</span>
+              </button>
+              <button
+                className={`platform-btn ${platform === 'gemini' ? 'active' : ''}`}
+                onClick={() => setPlatform('gemini')}
+              >
+                <span className="platform-icon">✨</span>
+                <span className="platform-name">Gemini</span>
+              </button>
+              <button
+                className={`platform-btn ${platform === 'claude' ? 'active' : ''}`}
+                onClick={() => setPlatform('claude')}
+              >
+                <span className="platform-icon">🎭</span>
+                <span className="platform-name">Claude</span>
+              </button>
             </div>
           </div>
 
           {/* Input Section */}
           <div className="glass-card">
-            <h2>3. Load Chat History</h2>
-            {sourceType === 'local' ? (
-              <div className="file-upload">
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={handleFileUpload}
-                  className="file-upload-input"
-                  id="file-input"
-                  disabled={loading}
-                />
-                <label
-                  htmlFor="file-input"
-                  className={`file-upload-label ${loading ? 'disabled' : ''}`}
-                  onDragOver={handleDragOver}
-                  onDrop={handleDrop}
-                >
-                  {loading ? (
-                    <>
-                      <div className="spinner"></div>
-                      <span>Processing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="upload-icon">📤</span>
-                      <span>Click to upload or drag & drop JSON file</span>
-                    </>
-                  )}
-                </label>
-              </div>
-            ) : (
-              <div className="url-input-section">
-                <div className="input-group">
-                  <label className="input-label">Enter JSON URL</label>
-                  <input
-                    type="url"
-                    className="input-field"
-                    placeholder="https://example.com/chat-history.json"
-                    value={urlInput}
-                    onChange={(e) => setUrlInput(e.target.value)}
-                    disabled={loading}
-                  />
-                </div>
-                <button
-                  className="btn btn-primary w-full"
-                  onClick={handleUrlFetch}
-                  disabled={loading || !urlInput.trim()}
-                >
-                  {loading ? (
-                    <>
-                      <div className="spinner"></div>
-                      <span>Fetching...</span>
-                    </>
-                  ) : (
-                    'Fetch Chat History'
-                  )}
-                </button>
-              </div>
-            )}
+            <h2>3. Cargar Archivo JSON</h2>
+            <div className="file-upload">
+              <input
+                type="file"
+                accept=".json"
+                onChange={handleFileUpload}
+                className="file-upload-input"
+                id="file-input"
+                disabled={loading}
+              />
+              <label
+                htmlFor="file-input"
+                className={`file-upload-label ${loading ? 'disabled' : ''}`}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+              >
+                {loading ? (
+                  <>
+                    <div className="spinner"></div>
+                    <span>Procesando...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="upload-icon">📤</span>
+                    <span>Haz clic o arrastra tu archivo JSON aquí</span>
+                  </>
+                )}
+              </label>
+            </div>
           </div>
 
           {/* Alerts */}
@@ -427,6 +388,75 @@ function App() {
             </>
           )}
         </div>
+
+        {/* Help Modal */}
+        {showHelpModal && (
+          <div className="modal-overlay" onClick={() => setShowHelpModal(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>📖 Cómo Exportar tu Chat History</h2>
+                <button className="modal-close" onClick={() => setShowHelpModal(false)}>
+                  ✕
+                </button>
+              </div>
+              <div className="modal-body">
+                <div className="help-section">
+                  <h3>🦙 Ollama</h3>
+                  <p>Exporta desde la interfaz web o usa el comando CLI para obtener el JSON de tu conversación.</p>
+                </div>
+
+                <div className="help-section">
+                  <h3>💻 LM Studio</h3>
+                  <ol>
+                    <li>Abre LM Studio</li>
+                    <li>Ve a la pestaña "Chat"</li>
+                    <li>Haz clic en el menú de la conversación (⋮)</li>
+                    <li>Selecciona "Export conversation"</li>
+                    <li>Guarda el archivo .json</li>
+                  </ol>
+                </div>
+
+                <div className="help-section">
+                  <h3>🤖 ChatGPT</h3>
+                  <ol>
+                    <li>Ve a <a href="https://chatgpt.com" target="_blank" rel="noopener noreferrer">chatgpt.com</a></li>
+                    <li>Haz clic en tu perfil (esquina superior derecha)</li>
+                    <li>Selecciona "Settings" → "Data controls"</li>
+                    <li>Haz clic en "Export data"</li>
+                    <li>Espera el email con tu archivo ZIP</li>
+                    <li>Extrae el archivo conversations.json</li>
+                  </ol>
+                </div>
+
+                <div className="help-section">
+                  <h3>✨ Gemini (Google AI Studio)</h3>
+                  <ol>
+                    <li>Ve a <a href="https://aistudio.google.com" target="_blank" rel="noopener noreferrer">aistudio.google.com</a></li>
+                    <li>Abre tu conversación</li>
+                    <li>Haz clic en "Get code" o "Export"</li>
+                    <li>Copia el JSON de la conversación</li>
+                    <li>Guárdalo como archivo .json</li>
+                  </ol>
+                </div>
+
+                <div className="help-section">
+                  <h3>🎭 Claude</h3>
+                  <ol>
+                    <li>Ve a <a href="https://claude.ai" target="_blank" rel="noopener noreferrer">claude.ai</a></li>
+                    <li>Abre la conversación que quieres exportar</li>
+                    <li>Haz clic en el menú (⋮) de la conversación</li>
+                    <li>Selecciona "Export conversation"</li>
+                    <li>Descarga el archivo JSON</li>
+                  </ol>
+                </div>
+
+                <div className="help-note">
+                  <p><strong>💡 Nota:</strong> Todos los archivos se procesan localmente en tu navegador. Tu información nunca sale de tu dispositivo.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <footer className="footer">
